@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Analyzing Images via Ruby</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+    <style type="text/css">
+      @import url(http://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
+      @import url(http://fonts.googleapis.com/css?family=Droid+Serif:400,700,400italic);
+      @import url(http://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700,400italic);
+      @import url(http://www.markdowner.com/stylesheets/default-remark.css);
+
+      body { font-family: 'Droid Serif'; }
+      h1, h2, h3 {
+        font-family: 'Yanone Kaffeesatz';
+        font-weight: normal;
+      }
+
+      .example-image img{
+        max-height: 250px;
+        padding-top: 100px;
+      }
+      
+      .single-image {
+        float: left;
+        padding-right: 35px;
+      }
+
+      .zistle1 img {
+        width: 500px;
+      }
+
+      .zistle2 img {
+        width: 500px;
+      }
+
+      .col {
+        float: left;
+        width: 50%;
+      }
+
+      .col75 {
+        float: left;
+        width: 70%;
+      }
+
+      .col25 {
+        float: left;
+        width: 25%;
+      }
+
+      .col33 {
+        float: left;
+        width: 33%;
+      }
+
+      .col25 img{
+        padding-top: 20px;
+        padding-left: 15px;
+      }
+
+      .col33 img{
+        padding-top: 20px;
+        padding-left: 15px;
+        width: 220px;
+      }
+      
+      .swt {
+        height: 125px;
+        line-height: 125px;
+        display: block;
+      }
+      .swt img {
+        height: 115px;
+      }
+
+      .twins-logo img{
+        height: 200px;
+      }
+
+      .clear {
+        clear: both;
+      }
+
+      img[alt=example] { width: 350px; }
+      .remark-code, .remark-inline-code { font-family: 'Ubuntu Mono'; }
+    </style>
+  </head>
+  <body>
+    <textarea id="source">
+
+layout: true
+name: inverse
+class: center, middle, inverse
+---
+# Analyzing Images via Ruby
+## Josh Cutler
+### 11/24/14
+---
+## What do you mean by analyzing?
+---
+
+layout: false
+.left-column[
+  ## What?
+]
+.right-column[
+Image analysis can take many forms, but we will be primarily talking about how to glean information about what is in the picture.
+
+- OCR (Optical Character Recognition)
+
+  - Receipt Scanners (Neat, Harvest Expensify)
+  - Menu readers (PickyPint, WineGlass App)
+  - ATM Check deposit
+  - Thanks to Atwood’s law: http://antimatter15.com/ocrad.js/demo.html
+
+- Object Recognition (e.g. Haar Classifiers)
+  
+  - Image based search (slyce.it )
+  - Face recognizers (Facebook, Kinect)
+
+- Image de-duping via image hashing
+]
+---
+.left-column[
+  ## What?
+  ## Why?
+]
+.right-column[
+Images can be a great input to our applications, however we are limited in what we can do with them unless they are annotated.
+
+- Extracting text
+
+- Recognizing known objects
+
+- Matching against previous images that are already annotated
+
+- Lots of other things that I won't cover.
+]
+---
+.left-column[
+  ## What?
+  ## Why?
+  ## How?
+]
+.right-column[
+I will show examples of solutions that I have used for [zistle.com](http://www.zistle.com)
+
+- Solutions are *very* domain dependent
+
+- Every one of these topics is the result of multiple dissertations
+
+- The real heavy lifting is happening in C .red[*]
+
+- We will leverage open source libraries from Ruby
+
+.footnote[.red[*] Haar classifiers can take days to train]
+]
+---
+template: inverse
+
+## Ok, give me some specifics.
+---
+### If you insist.
+
+[Zistle.com](http://www.zistle.com) is a website for collectors that helps them manage their collectibles (primarily cards)
+.  It has some interesting data problems:
+
+- There are not authoritative lists of what has been manufactored
+  
+  - Many of the manufacturers don't have this information.  Many have gone out of business.
+
+  - There are millions of unique collectible cards
+
+  - We have addressed this via crowdsourcing. 
+
+- Many of the items themselves are not clearly labeled, so it isn't clear what item you have
+
+- Collecting this data is very labor intensive 
+
+  - We have users that spend 8 hours a day entering data into the site
+
+  - There are lots of mistakes and debates about the "truth"
+
+---
+template: inverse
+## Labor intensive you say?
+
+---
+### Scanners.  These horrible yet useful machines.
+.center.zistle1[![](./scanner.jpg)]
+
+---
+### Scanning material
+.center.zistle1[![](./card-room.jpg)]
+
+---
+### Now enter that information into Zistle.
+.center.zistle1[![](./zistle-add-cards.jpg)]
+
+---
+### A few million iterations later...
+
+.center.zistle1[![](./zistle-collection.jpg)]
+---
+template: inverse
+
+## Got it.  So what did you do?
+---  
+---
+## Improving Data Collection
+
+It is a common occurence for our users to have already scanned their cards.  However, entering them into the site and annotating them can be a lot of work.
+
+What if we could use the images to ease this burden?
+
+.example-image[![](./shivan dragon.hq.jpg) ![](./test.jpg) ![](./teddy1.jpg) ![](./joe-mauer.jpg) ]
+---
+## Improving Data Collection - OCR
+
+.single-image[![example](./shivan dragon.hq.jpg)]
+### We want to get:
+
+  - “Shivan Dragon”
+
+  - “Summon Dragon”
+
+  - “Flying +1/+0”
+
+  - “While it’s true most Dragons are cruel, the Shivan Dragon seems to take particular glee in the misery of others, often…”
+---
+## OCR Example
+
+We will use the [rtesseract](https://github.com/dannnylo/rtesseract) gem which is a wrapper for [Tesseract](https://code.google.com/p/tesseract-ocr/) library.
+
+Here is the simple naive approach
+
+```Ruby
+# Relies on rtesseract, rmagick
+require 'rtesseract'
+
+image_name = 'shivan dragon.hq.jpg'
+
+# Naive approach
+source = RTesseract.new(image_name)
+source.to_s
+
+* >> " \n\nIlluq. © Melissa Bcmnn\n\n"
+```
+---
+## OCR - Targeting
+
+Luckily we have some domain knowledge.  In particular, magic cards have a regular layout.
+
+Lets exploit the structure of the card
+
+```Ruby
+source = Magick::Image.read(image_name).first
+c = source.crop(50, 425, 390, 180)
+c.write "jpeg:ocr-body-cropped.jpg"
+RTesseract.new('ocr-body-cropped.jpg', debug: true).to_s
+
+* >> "Flying, 7): +1/+0\n\nW/'hile it’: true most Dragons are\ncruel, the Shivan Dragon seem: to\ntake particular glee in the misery of\nothers, often tormenting its victims\nmuch like a cat plays: with a mouxe\nbefore delivering the ﬁnal blow.\n\n"
+```
+
+.col[*Flying, 7): +1/+0
+While it’: true most Dragons are
+cruel, the Shivan Dragon seem: to
+take particular glee in the misery of
+others, often tormenting its victims
+much like a cat plays: with a mouse
+before delivering the ﬁnal blow.*]
+
+.col[![](./ocr-body-cropped.jpg)]
+
+---
+## OCR - Transforming
+
+Can we do this for the title?  It is trickier, there is less contrast and a stroke
+
+.col75[
+```Ruby
+source = Magick::Image.read(image_name).first
+c = source.crop(10, 10, 200, 40)
+c.write "jpeg:ocr-head-cropped.jpg"
+```]
+.col25[![](./ocr-head-cropped.jpg)]
+
+.col75[
+```Ruby
+t = c.white_threshold 29000
+```]
+.col25[![](./ocr-head-white.jpg)]
+
+.col75[
+```Ruby
+q = t.quantize 256, Magick::GRAYColorspace
+```]
+.col25[![](./ocr-head-quantized.jpg)]
+
+.col75[
+```Ruby
+n = q.negate
+```]
+.col25[![](./ocr-head-negated.jpg)]
+
+.col75[
+```Ruby
+w = n.white_threshold 28000
+```]
+.col25[![](./ocr-head-white2.jpg)]
+
+---
+## Improving Data Collection - OCR
+
+Now lets try running OCR on this image
+
+```Ruby
+RTesseract.new('ocr-head-white2.jpg', debug: true).to_s
+
+* >> "Shivan Dragon\n\n"
+```
+
+---
+## OCR - SWT
+
+.single-image[![example](./test.jpg)]
+What if the structure changes?  The previous approach is not robust to variable structures.
+
+There are algorithms for detecting where text is.  Namely [Stroke Width Transform](http://www.cs.cornell.edu/courses/cs4670/2010fa/projects/final/results/group_of_arp86_sk2357/Writeup.pdf).
+
+They have issues (AKA they haven’t worked well for me yet).
+
+Open Source library called [DetectText](https://github.com/aperrau/DetectText)
+
+---
+## OCR - SWT Decomposition
+
+.col[.swt[![](./canny.png)]]
+.col[.swt[Canny edge detection]]
+.clear[ ]
+
+.col[.swt[![](./SWT.png)]]
+.col[.swt[Stroke Width Detection]]
+
+.col[.swt[![](./components.png)]]
+.col[.swt[Connected Components]]
+
+.col[.swt[![](./detect_text_bottom_b.jpg)]]
+.col[.swt[Final Output]]
+
+---
+## OCR - SWT Code
+
+Just use the command line tools to create the outputs in this case
+
+```Ruby
+%x(./DetectText '#{Dir.pwd}/ocr-general-top.jpg' '#{out_path}' 1)
+rtess = RTesseract.new(out_path)
+rtess.to_s
+```
+
+Note that this algorithm can detect white or black text but can only do one at a time.  Run twice if you do not know the color of the text.
+---
+template: inverse
+
+## Ok.  But what if the information we need isn't text?
+
+---
+## Object Detection
+
+There are lots of ways to do object detection.  For Zistle we wanted to automatically label cards by team.
+
+- We have a finite set of relatively static objects: Logos
+
+- We will use [Cascade Classifiers](http://docs.opencv.org/doc/user_guide/ug_traincascade.html)
+  
+  - Supervised learning technique
+  
+  - There is an implementation in the [OpenCV](http://docs.opencv.org/) library
+
+.center[![](http://upload.wikimedia.org/wikipedia/commons/thumb/3/32/OpenCV_Logo_with_text_svg_version.svg/97px-OpenCV_Logo_with_text_svg_version.svg.png)]
+---
+## Cascade Classifiers
+
+Find Haar like Features (similar to Haar wavelets) .red[*]
+
+We reduce the feature space by comparing rectangles
+
+- A simple rectangular Haar-like feature can be defined as the difference of the sum of pixels of areas inside the rectangle
+
+- Use [Adaboost](http://en.wikipedia.org/wiki/AdaBoost) to select the best features
+
+.center[![](haar.png)]
+
+.footnote[.red[*] Viola and Jones, "Rapid object detection using a boosted cascade of simple features", Computer Vision and Pattern Recognition, 2001]
+
+---
+## Classifier - Training
+
+There are 2 stages to their user: training and detection 
+
+We need positive and negative training samples
+  
+  - Positive example will just be the twins logo
+  
+  - Negative examples are anything else
+
+We will use ```opencv_createsamples``` to generate more via random rotating, changing the logo intensity as well as placing the logo on arbitrary background
+
+.center.twins-logo[![](./twins-logo2.jpg)]
+
+---
+## Classifier - Training Ctd
+Create folder of negative and a folder of positive examples
+
+```bash
+opencv_createsamples -vec positive-samples.vec -img positive/twins-logo.jpeg \
+-bgcolor 34
+```
+
+```bash
+opencv_traincascade -data twins-classifier -vec positive-samples.vec \
+-bg negative.txt -precalcValBufSize 2048 -precalcIdxBufSize 2048 \
+-numPos 200 -numNeg 900 -numStages 10 -minhitrate 0.999 -maxfalsealarm 0.5 \
+-w 50 -h 50 -nonsym -baseFormatSave
+```
+
+Now wait 1-5 days.  Hopefully you selected the right parameters and haven't over/undertrained. .red[*]
+
+.footnote[.red[*] There is a lot of literature on how to deal with this.  But, it is a large topic and domain dependent.]
+
+---
+## Classifier - Detection
+Once we have a classifier that is well calibrated, detection is easy
+
+```Ruby
+cascade_file = "#{Dir.pwd}/training/twins-classifier2/cascade.xml"
+detector = CvHaarClassifierCascade.load(cascade_file)
+
+examples = ['test1.jpg', 'test2.jpg', 'test3.jpg']
+
+examples.each do |file_name|
+  image = CvMat.load(file_name)
+  detector.detect_objects(image).each do |region|
+    color = CvColor::Green
+    image.rectangle! region.top_left, region.bottom_right, color: color
+  end
+
+  image.save_image("processed_#{file_name}")
+end
+```
+
+---
+## Classifier - Detection
+
+.col33[![](./processed_test1.jpg)]
+.col33[![](./processed_test2.jpg)]
+.col33[![](./processed_test3.jpg)]
+
+---
+template: inverse
+
+## A quick recap
+
+---
+## A few random things
+
+There are a ton of other things you can do in this space.  
+
+At Zistle we are working on a system to allow users to snap a photo of a card and tell them which one it is.
+
+  -  It isn't fully baked yet
+
+  - It is a hefty enough topic that it is probably a seperate talk.
+
+Check out these resources for more info:
+
+ - http://www.computervisionmodels.com/
+
+ - http://szeliski.org/Book/
+
+ - http://docs.opencv.org/
+
+Sometimes it is cheaper / easier to just send things to mechanical turk!
+
+---
+## What did I just see?
+
+I showed you a few of techniques to automate the process of labeling images.
+
+- You can use OCR to detect text.
+
+  - You might need to clean it up
+
+  - An accuracy rate of 95% still neans that you get a Iot of characters wrng.
+
+- If you have a finite set of objects that you wish to detect, you can train classifiers to find them
+
+  - You will need training data
+
+  - There is a non-trivial amount of up front work
+
+
+---
+template: inverse
+
+## Questions / Comments?
+### josh@cutl3r.com
+### @josh_cutler
+
+---
+## Tesseract Algorithm
+
+READING INPUT
+- Lines are read in from scanned image, in edge detection
+
+EDGE DETECTION/OUTLINES
+- Black pixels are split into blobs, aka edge detection
+- Blobs are processed to extract outlines, in edge detection
+
+LINES/SKEW
+- Lines are derived from strings of blobs with outlines
+- Gradient/rotation of page is calculated
+- Lines are adjusted for skew
+
+---
+## Tesseract Algorithm Ctd.
+
+WORDS/SEGMENTER
+- Higher-level procedure to order blobs into words
+- Blobs in lines are segmented into words
+
+CLASSIFICATION
+- Classification of features in letters of all words performed
+- Words are checked in dictionary and permuter to improve them
+- Play with xht (height of letter 'x') for words
+- Words are fitted to lines and assigned to rows that fit them best
+
+    </textarea>
+    <script src="http://gnab.github.io/remark/downloads/remark-latest.min.js">
+    </script>
+    <script>
+      var slideshow = remark.create();
+    </script>
+  </body>
+</html>
